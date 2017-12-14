@@ -40,14 +40,21 @@ let open_file f_name =
         (out_r, out_w),
         (_, err_w) = Unix.(pipe (), pipe (), pipe ())
     in
-    let args = [|"r2"; "-q0"; f_name|] in
+    let args = [|"r2"; "-2"; "-q0"; f_name|] in
     let pid = Unix.create_process "r2" args ins_r out_w err_w in
     (* Get rid of the beginning \x00 *)
-    ignore (Unix.read out_r (Bytes.create 1) 0 1);
-    {pid; read_from = out_r; write_to = ins_w}
+    try
+        ignore (Unix.read out_r (Bytes.create 1) 0 1);
+        {pid; read_from = out_r; write_to = ins_w}
+    with
+        Unix.Unix_error _ ->
+        {pid = 0; read_from = out_r; write_to = ins_w}
 
 (* Heavy handed but we ensure that r2 is killed *)
-let close {pid; _} = Unix.kill pid Sys.sigkill
+let close {pid; _} =
+    Unix.kill pid Sys.sigterm;
+    Unix.waitpid [] pid;
+    ()
 
 let with_command ~cmd f_name =
   let r2 = open_file f_name in
@@ -57,6 +64,9 @@ let with_command ~cmd f_name =
 
 let with_command_j ~cmd f_name =
   let r2 = open_file f_name in
+  if not (r2.pid = 0) then
   let output = command ~r2 cmd in
   close r2;
   output |> Yojson.Basic.from_string
+  else
+      `Assoc []
